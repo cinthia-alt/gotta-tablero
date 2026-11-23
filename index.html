@@ -1448,9 +1448,7 @@ async function fetchFromSheet(country) {
   document.getElementById('sync-text').textContent = 'Cargando GA4 ' + country + '…';
   try {
     const target = APPS_SCRIPT_URL + '?country=' + country;
-    // Apps Script bloquea CORS desde dominios externos — proxy necesario
-    const proxy = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(target);
-    const resp = await fetch(proxy);
+    const resp = await fetch(target, { redirect: 'follow' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const raw  = await resp.json();
     if (raw.error) throw new Error(raw.error);
