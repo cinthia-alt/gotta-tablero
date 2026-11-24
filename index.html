@@ -230,6 +230,45 @@ body {
   color: var(--bk-dark);
 }
 
+/* Selector de fecha inline en section-nav */
+.date-range-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  background: var(--bg-white);
+  border: 1.5px solid var(--border-mid);
+  border-radius: 20px;
+  padding: 4px 10px;
+}
+.date-input-sm {
+  font-size: 11px;
+  font-family: 'Nunito', sans-serif;
+  font-weight: 700;
+  color: var(--text-mid);
+  border: none;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  width: 108px;
+}
+.btn-range-apply {
+  background: var(--bk-yellow);
+  border: none;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+.btn-range-apply:hover { opacity: 0.8; }
+
 /* ═══════════════════════════════════════════
    MAIN CONTAINER
 ═══════════════════════════════════════════ */
@@ -987,6 +1026,12 @@ tr:hover td { background: rgba(245,197,24,0.07) !important; }
   <button class="section-btn" onclick="switchSection('categorias')">Categorías</button>
   <button class="section-btn" onclick="switchSection('clusters')">Clusters</button>
   <button class="section-btn" onclick="switchSection('alertas')">Alertas</button>
+  <div class="date-range-inline">
+    <input type="date" class="date-input-sm" id="date-from-dash" title="Desde" />
+    <span style="color:var(--text-light);font-size:11px">→</span>
+    <input type="date" class="date-input-sm" id="date-to-dash" title="Hasta" />
+    <button class="btn-range-apply" onclick="applyDateRange()" title="Aplicar rango de fechas">⚡</button>
+  </div>
 </div>
 
 <!-- ═══════════════════ MAIN ═══════════════════ -->
@@ -1343,6 +1388,8 @@ let store = {}; // { CL: { data, timestamp }, ... }
   const to   = new Date(y, m + 1, 0);
   document.getElementById('date-from').value = fmt(from);
   document.getElementById('date-to').value   = fmt(to);
+  document.getElementById('date-from-dash').value = fmt(from);
+  document.getElementById('date-to-dash').value   = fmt(to);
 
   loadFromStorage();
   renderHistoryBar();
@@ -1419,6 +1466,9 @@ function transformPayload(raw) {
 
   return {
     periodo: raw.desde ? raw.desde.slice(0,7).replace('-',' ') : '—',
+    desde:   raw.desde  || null,
+    hasta:   raw.hasta  || null,
+    source:  raw.source || 'cache',
     currency: raw.moneda || 'USD',
     funnel: {
       sesiones,
@@ -1443,16 +1493,20 @@ function transformPayload(raw) {
   };
 }
 
-async function fetchFromSheet(country) {
+async function fetchFromSheet(country, desde, hasta) {
   document.getElementById('loading').classList.add('show');
-  document.getElementById('sync-text').textContent = 'Cargando GA4 ' + country + '…';
+  const modeLabel = (desde && hasta) ? `${desde} → ${hasta}` : 'caché';
+  document.getElementById('sync-text').textContent = `Cargando GA4 ${country} (${modeLabel})…`;
   try {
-    const target = APPS_SCRIPT_URL + '?country=' + country;
+    let target = APPS_SCRIPT_URL + '?country=' + country;
+    if (desde && hasta) target += `&desde=${desde}&hasta=${hasta}`;
     const resp = await fetch(target, { redirect: 'follow' });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const raw  = await resp.json();
     if (raw.error) throw new Error(raw.error);
     const payload = transformPayload(raw);
+    // Guardar las fechas usadas en el payload para mostrarlo en el header
+    if (desde && hasta) { payload.desde = desde; payload.hasta = hasta; }
     window.GOTTA.loadCountry(country, payload);
   } catch(err) {
     document.getElementById('loading').classList.remove('show');
@@ -1462,11 +1516,33 @@ async function fetchFromSheet(country) {
 }
 
 /* ═══════════════════════════════════════════
-   REQUEST LOAD
+   REQUEST LOAD / APPLY DATE RANGE
 ═══════════════════════════════════════════ */
 function requestLoad() {
+  const desde = document.getElementById('date-from').value;
+  const hasta = document.getElementById('date-to').value;
   document.getElementById('load-panel').classList.add('hidden');
-  fetchFromSheet(activeCountry);
+  // Sincronizar fechas al selector inline
+  if (desde) document.getElementById('date-from-dash').value = desde;
+  if (hasta)  document.getElementById('date-to-dash').value  = hasta;
+  fetchFromSheet(activeCountry, desde || null, hasta || null);
+}
+
+function applyDateRange() {
+  const desde = document.getElementById('date-from-dash').value;
+  const hasta = document.getElementById('date-to-dash').value;
+  if (!desde || !hasta) {
+    alert('Seleccioná ambas fechas para aplicar el filtro.');
+    return;
+  }
+  if (desde > hasta) {
+    alert('"Desde" no puede ser mayor que "Hasta".');
+    return;
+  }
+  // Sincronizar al panel principal también
+  document.getElementById('date-from').value = desde;
+  document.getElementById('date-to').value   = hasta;
+  fetchFromSheet(activeCountry, desde, hasta);
 }
 
 /* ═══════════════════════════════════════════
@@ -1511,11 +1587,24 @@ function showDashboard(d, country) {
   document.getElementById('dashboard-content').classList.add('show');
   document.getElementById('section-nav').style.display = 'flex';
 
+  // Sincronizar fechas al selector inline si vienen en el payload
+  if (d.desde) {
+    document.getElementById('date-from-dash').value = d.desde;
+    document.getElementById('date-from').value = d.desde;
+  }
+  if (d.hasta) {
+    document.getElementById('date-to-dash').value = d.hasta;
+    document.getElementById('date-to').value = d.hasta;
+  }
+
   // Periodo header
-  document.getElementById('periodo-display').textContent = d.periodo || '—';
+  const periodoLabel = (d.desde && d.hasta)
+    ? d.desde + ' → ' + d.hasta
+    : (d.periodo || '—');
+  document.getElementById('periodo-display').textContent = periodoLabel;
   document.getElementById('periodo-country').innerHTML =
     (FLAGS[country]||'') + ' ' + country;
-  document.getElementById('funnel-periodo-sub').textContent = d.periodo || '';
+  document.getElementById('funnel-periodo-sub').textContent = periodoLabel;
 
   renderFunnel(d);
   renderProductos(d);
